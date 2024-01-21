@@ -9,6 +9,8 @@ from tkinter import filedialog
 from tkinter import messagebox
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import cv2
+import numpy as np
 
 client = OpenAI(
   api_key=os.getenv('OPENAI_API_KEY')
@@ -30,6 +32,45 @@ def extract_frames(video_path, frames_dir='frames', every_n_seconds=2):
 def encode_image(image_path):
   with open(image_path, "rb") as image_file:
     return base64.b64encode(image_file.read()).decode('utf-8')
+  
+def frame_difference(prev_frame, curr_frame, threshold=75000):
+    """Calculate the difference between two frames."""
+    #converting to rgb
+    prev_rgb = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2RGB)
+    curr_rgb = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2RGB)
+
+    #converting to grayscale
+    gray_prev = cv2.cvtColor(prev_rgb, cv2.COLOR_BGR2GRAY)
+    gray_curr = cv2.cvtColor(curr_rgb, cv2.COLOR_BGR2GRAY)
+    
+    blur_prev = cv2.GaussianBlur(gray_prev, (21, 21), 0)
+    blur_curr = cv2.GaussianBlur(gray_curr, (21, 21), 0)
+    
+    # Compute the absolute difference between the current frame and the previous frame
+    frame_diff = cv2.absdiff(blur_curr, blur_prev)
+    
+    # Threshold the difference image to binarize it, highlighting significant changes
+    _, thresh = cv2.threshold(frame_diff, 25, 255, cv2.THRESH_BINARY)
+    
+    # Dilate the thresholded image to fill in holes, making the detected regions more complete
+    dilated = cv2.dilate(thresh, None, iterations=2)
+    
+    # Find contours in the thresholded image to identify regions of change
+    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Calculate the total area of all detected changes
+    total_area = sum(cv2.contourArea(contour) for contour in contours)
+    
+    # Check if the total area of changes exceeds the threshold
+    return total_area > threshold
+
+def process_video(frames):
+    key_frames = [frames[0]]
+    for i in range(len(frames) - 1):
+       if(frame_difference(cv2.imread(frames[i]), cv2.imread(frames[i+1]))):
+          key_frames.append(frames[i+1])
+
+    return key_frames
   
 def submit_request(base64_image):
   headers = {
@@ -68,7 +109,7 @@ def summarise(descriptions):
   response = client.chat.completions.create(
       model="gpt-4",
       messages=[
-        {"role": "system", "content": "You are a helpful summarising assistant."},
+        {"role": "system", "content": "You are a helpful summarising assistant, be as concise as possible so to only point out things that occur a lot in the images."},
         {"role": "user", "content": prompt}
       ],
       max_tokens=150,
@@ -91,16 +132,17 @@ def run(video_path):
   frames = []
   for frame_filename in os.listdir(frames_dir):
     frame_path = os.path.join(frames_dir, frame_filename)
-    frames.append(encode_image(frame_path))
+    frames.append(frame_path)
+  key_frames = process_video(frames=frames)
   descriptions = []
 
-  descriptions = execute_requests_concurrently(frames, descriptions)
+  descriptions = execute_requests_concurrently(key_frames, descriptions)
   text_to_speech(summarise(descriptions=descriptions))
 
 def execute_requests_concurrently(images, descriptions):
     with ThreadPoolExecutor(max_workers=10) as executor:
         # Submit all the API requests
-        future_to_prompt = [executor.submit(submit_request, image) for image in images]
+        future_to_prompt = [executor.submit(submit_request, encode_image(image)) for image in images]
         
         # Process the results as they are completed
         for future in as_completed(future_to_prompt):
@@ -145,5 +187,5 @@ def execute_requests_concurrently(images, descriptions):
 # # Run the application
 # root.mainloop()
 
-video_path = "IMG_4405.mov"
+video_path = "IMG_4491.mov"
 run(video_path)
