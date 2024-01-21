@@ -33,7 +33,7 @@ def encode_image(image_path):
 def submit_request(base64_image):
   headers = {
     "Content-Type": "application/json",
-    "Authorization": f"Bearer {api_key}"
+    "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"
   }
   
   payload = {
