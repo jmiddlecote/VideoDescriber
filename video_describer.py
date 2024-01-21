@@ -8,12 +8,13 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 client = OpenAI(
   api_key=os.getenv('OPENAI_API_KEY')
 )
 
-def extract_frames(video_path, frames_dir='frames', every_n_seconds=1):
+def extract_frames(video_path, frames_dir='frames', every_n_seconds=2):
     if os.path.exists(frames_dir):
         shutil.rmtree(frames_dir)
     os.mkdir(frames_dir)
@@ -87,44 +88,62 @@ def run(video_path):
 
   # Assume we have a directory 'frames' with extracted images
   frames_dir = 'frames'
-  descriptions = []
+  frames = []
   for frame_filename in os.listdir(frames_dir):
-      frame_path = os.path.join(frames_dir, frame_filename)
-      encoded_frame = encode_image(frame_path)
-      descriptions.append(submit_request(encoded_frame))
+    frame_path = os.path.join(frames_dir, frame_filename)
+    frames.append(encode_image(frame_path))
+  descriptions = []
 
+  descriptions = execute_requests_concurrently(frames, descriptions)
   text_to_speech(summarise(descriptions=descriptions))
 
-def select_video():
-    """Open a dialog to select a video file."""
-    file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4 *.avi *.mov")])
-    if file_path:
-        entry.delete(0, tk.END)
-        entry.insert(0, file_path)
+def execute_requests_concurrently(images, descriptions):
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all the API requests
+        future_to_prompt = [executor.submit(submit_request, image) for image in images]
+        
+        # Process the results as they are completed
+        for future in as_completed(future_to_prompt):
+            try:
+                result = future.result()
+                descriptions.append(result)
+            except Exception as exc:
+                print(f"Prompt generated an exception: {future.exception}\n{exc}\n")
+        return descriptions
 
-def summarize_video():
-    """Placeholder function for video summarization logic."""
-    video_path = entry.get()
-    if video_path:
-        # Implement your video summarization logic here
-        messagebox.showinfo("Info", f"Video summarization started for: {video_path}")
-        run(video_path=video_path)
-    else:
-        messagebox.showwarning("Warning", "Please select a video file first.")
+# def select_video():
+#     """Open a dialog to select a video file."""
+#     file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4 *.avi *.mov")])
+#     if file_path:
+#         entry.delete(0, tk.END)
+#         entry.insert(0, file_path)
 
-# Create the main window
-root = tk.Tk()
-root.title("Video Summarizer")
+# def summarize_video():
+#     """Placeholder function for video summarization logic."""
+#     video_path = entry.get()
+#     if video_path:
+#         # Implement your video summarization logic here
+#         messagebox.showinfo("Info", f"Video summarization started for: {video_path}")
+#         run(video_path=video_path)
+#     else:
+#         messagebox.showwarning("Warning", "Please select a video file first.")
 
-# Create and pack widgets
-entry = tk.Entry(root, width=50)
-entry.pack(padx=10, pady=10)
+# # Create the main window
+# root = tk.Tk()
+# root.title("Video Summarizer")
 
-select_button = tk.Button(root, text="Select Video", command=select_video)
-select_button.pack(pady=5)
+# # Create and pack widgets
+# entry = tk.Entry(root, width=50)
+# entry.pack(padx=10, pady=10)
 
-summarize_button = tk.Button(root, text="Summarize Video", command=summarize_video)
-summarize_button.pack(pady=5)
+# select_button = tk.Button(root, text="Select Video", command=select_video)
+# select_button.pack(pady=5)
 
-# Run the application
-root.mainloop()
+# summarize_button = tk.Button(root, text="Summarize Video", command=summarize_video)
+# summarize_button.pack(pady=5)
+
+# # Run the application
+# root.mainloop()
+
+video_path = "IMG_4405.mov"
+run(video_path)
